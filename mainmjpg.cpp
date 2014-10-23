@@ -1,0 +1,293 @@
+/*
+ * Copyright (C) 2014  RoboPeak
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+/*
+ *  RoboPeak Lidar System
+ *  Simple Data Grabber Demo App
+ *
+ *  Copyright 2009 - 2014 RoboPeak Team
+ *  http://www.robopeak.com
+ *
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <gd.h>
+
+/*begin for MJPG-Streamer*/
+#include "mjpg_streamer.h"
+#include "utils.h"
+#include "input.h"
+#include "output.h"
+
+#include <unistd.h>
+#include <string.h>
+#include <getopt.h>
+#include <pthread.h>
+#include <syslog.h>
+#include <sys/types.h>
+#include <sys/inotify.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+/*end for MJPG-Streamer*/
+
+#include "rplidar.h" //RPLIDAR standard sdk, all-in-one header
+
+#ifndef _countof
+#define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
+#endif
+
+using namespace rp::standalone::rplidar;
+
+static RPlidarDriver * drv;
+
+/*begin for MJPG-Streamer------*/
+static pthread_t   worker;
+static globals     *pglobal;
+
+void *worker_thread(void *);
+void worker_cleanup(void *);
+
+static int delay = 0;
+static char *folder = NULL;
+static char *filename = NULL;
+static int rm = 0;
+static int plugin_number;
+
+/* global variables for this plugin */
+static int fd, rc, wd, size;
+static struct inotify_event *ev;
+
+/*-------end for MJPG-Streamer*/
+
+
+void *worker_thread(void *arg)
+{
+/*begin for pic begin*/
+	gdImagePtr im;
+	FILE *out;
+	int black,white;
+	
+/*end for pic end*/
+	
+    u_result ans;
+    
+    char buffer[1<<16];
+    int file;
+    size_t filesize = 0;
+    struct stat stats;
+
+    /* set cleanup handler to cleanup allocated ressources */
+    pthread_cleanup_push(worker_cleanup, NULL);
+    
+    rplidar_response_measurement_node_t nodes[360*2];
+    size_t   count = _countof(nodes);
+	
+	while(!pglobal->stop) {
+		im = gdImageCreate(1200,1200);
+		black = gdImageColorAllocate(im,0,0,0);
+		white = gdImageColorAllocate(im,255,255,255);
+		gdImageLine(im,590,590,610,610,white);
+		gdImageLine(im,590,610,610,590,white);
+	
+
+    // fetech extactly one 0-360 degrees' scan
+		ans = drv->grabScanData(nodes, count);
+		if (IS_OK(ans) || ans == RESULT_OPERATION_TIMEOUT) {
+			drv->ascendScanData(nodes, count);
+
+            for (int pos = 0; pos < (int)count ; ++pos) {
+              //  printf("%s theta: %03.2f Dist: %08.2f \n", 
+              //      (nodes[pos].sync_quality & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ", 
+              //      (nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f,
+              //      nodes[pos].distance_q2/4.0f);
+                    
+/*begin for pic begin*/
+                gdImageLine(im,
+						600,
+						600,
+						600+nodes[pos].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+						600+nodes[pos].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+						white);
+             //   if (nodes[pos].distance_q2/4.0f > 0.01){
+			//		if (last!=-1){
+			//			gdImageLine(im,
+			//			600+nodes[last].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+			//			600+nodes[last].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+			//			600+nodes[pos].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+			//			600+nodes[pos].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+			//			white);
+			//		}
+			//		last = pos;	
+			//	}
+/*end for pic end*/
+            }
+/*begin for pic begin*/
+            out = fopen("gdtest.jpg","w");
+			gdImageJpeg(im,out,-1);
+			fclose(out);
+			gdImageDestroy(im);
+/*end for pic end*/
+        
+
+    return ans;
+}
+void worker_cleanup(void *arg)
+{
+    static unsigned char first_run = 1;
+
+    if(!first_run) {
+        DBG("already cleaned up ressources\n");
+        return;
+    }
+
+    first_run = 0;
+    DBG("cleaning up ressources allocated by input thread\n");
+
+    if(pglobal->in[plugin_number].buf != NULL) free(pglobal->in[plugin_number].buf);
+
+    free(ev);
+
+    rc = inotify_rm_watch(fd, wd);
+    if(rc == -1) {
+        perror("could not close watch descriptor");
+    }
+
+    rc = close(fd);
+    if(rc == -1) {
+        perror("could not close filedescriptor");
+    }
+}
+int input_init(input_parameter *param, int id) {
+	u32         opt_com_baudrate = 115200;
+	u_result     op_result;
+	const char * opt_com_path = "/dev/ttyUSB0";
+	
+    int i;
+    plugin_number = id;
+
+    param->argv[0] = "RPlidar input plugin";
+	pglobal = param->global;
+	
+	
+    // create the driver instance
+    drv = RPlidarDriver::CreateDriver(RPlidarDriver::DRIVER_TYPE_SERIALPORT);
+
+    if (!drv) {
+        fprintf(stderr, "insufficent memory, exit\n");
+        exit(-2);
+    }
+
+    rplidar_response_device_health_t healthinfo;
+    rplidar_response_device_info_t devinfo;
+    do {
+        // try to connect
+        if (IS_FAIL(drv->connect(opt_com_path, opt_com_baudrate))) {
+            fprintf(stderr, "Error, cannot bind to the specified serial port %s.\n"
+                , opt_com_path);
+            break;
+        }
+
+        // retrieving the device info
+        ////////////////////////////////////////
+        op_result = drv->getDeviceInfo(devinfo);
+
+        if (IS_FAIL(op_result)) {
+            if (op_result == RESULT_OPERATION_TIMEOUT) {
+                // you can check the detailed failure reason
+                fprintf(stderr, "Error, operation time out.\n");
+            } else {
+                fprintf(stderr, "Error, unexpected error, code: %x\n", op_result);
+                // other unexpected result
+            }
+            break;
+        }
+
+        // print out the device serial number, firmware and hardware version number..
+        printf("RPLIDAR S/N: ");
+        for (int pos = 0; pos < 16 ;++pos) {
+            printf("%02X", devinfo.serialnum[pos]);
+        }
+
+        printf("\n"
+                "Firmware Ver: %d.%02d\n"
+                "Hardware Rev: %d\n"
+                , devinfo.firmware_version>>8
+                , devinfo.firmware_version & 0xFF
+                , (int)devinfo.hardware_version);
+
+
+        // check the device health
+        ////////////////////////////////////////
+        op_result = drv->getHealth(healthinfo);
+        if (IS_OK(op_result)) { // the macro IS_OK is the preperred way to judge whether the operation is succeed.
+            printf("RPLidar health status : ");
+            switch (healthinfo.status) {
+            case RPLIDAR_STATUS_OK:
+                printf("OK.");
+                break;
+            case RPLIDAR_STATUS_WARNING:
+                printf("Warning.");
+                break;
+            case RPLIDAR_STATUS_ERROR:
+                printf("Error.");
+                break;
+            }
+            printf(" (errorcode: %d)\n", healthinfo.error_code);
+
+        } else {
+            fprintf(stderr, "Error, cannot retrieve the lidar health code: %x\n", op_result);
+            break;
+        }
+
+
+        if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
+            fprintf(stderr, "Error, rplidar internal error detected. Please reboot the device to retry.\n");
+            // enable the following code if you want rplidar to be reboot by software
+            // drv->reset();
+            break;
+        }
+
+
+        // take only one 360 deg scan and display the result as a histogram
+        ////////////////////////////////////////////////////////////////////////////////
+        
+
+    } while(0);
+
+
+    RPlidarDriver::DisposeDriver(drv);
+    return 0;
+}
+
+int input_run(int id)
+{
+	if (IS_FAIL(drv->startScan( /* true */ ))) // you can force rplidar to perform scan operation regardless whether the motor is rotating
+	{
+		fprintf(stderr, "Error, cannot start the scan operation.\n");
+		return 1;
+	}
+	pglobal->in[id].buf = NULL;
+	
+	if(pthread_create(&worker, 0, worker_thread, NULL) != 0) {
+        free(pglobal->in[id].buf);
+        fprintf(stderr, "could not start worker thread\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
