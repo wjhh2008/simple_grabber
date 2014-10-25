@@ -49,6 +49,8 @@
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
 #endif
 
+
+
 using namespace rp::standalone::rplidar;
 
 static RPlidarDriver * drv;
@@ -103,42 +105,25 @@ void *worker_thread(void *arg)
 	
 	
 	while(!pglobal->stop) {
-		im = gdImageCreate(1200,1200);
+		im = gdImageCreate(600,600);
 		black = gdImageColorAllocate(im,0,0,0);
 		white = gdImageColorAllocate(im,255,255,255);
-		gdImageLine(im,590,590,610,610,white);
-		gdImageLine(im,590,610,610,590,white);
-	
-
+		gdImageLine(im,290,290,310,310,white);
+		gdImageLine(im,310,290,290,310,white);
     // fetech extactly one 0-360 degrees' scan
 		ans = drv->grabScanData(nodes, count);
 		if (IS_OK(ans) || ans == RESULT_OPERATION_TIMEOUT) {
 			drv->ascendScanData(nodes, count);
-			int last = -1;
             for (int pos = 0; pos < (int)count ; ++pos) {
               //  printf("%s theta: %03.2f Dist: %08.2f \n", 
               //      (nodes[pos].sync_quality & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ", 
               //      (nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f,
               //      nodes[pos].distance_q2/4.0f);
-                    
-
-                gdImageLine(im,
-						600,
-						600,
-						600+nodes[pos].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
-						600+nodes[pos].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
+                gdImageSetPixel(im,
+						300+nodes[pos].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.00027271), // pi/64/180 = 0.00027271
+						300+nodes[pos].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)*0.00027271),
 						white);
-                if (nodes[pos].distance_q2/4.0f > 0.01){
-					if (last!=-1){
-						gdImageLine(im,
-						600+nodes[last].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
-						600+nodes[last].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
-						600+nodes[pos].distance_q2/40.0f*sin(-(nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
-						600+nodes[pos].distance_q2/40.0f*cos((nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f*M_PI/180),
-						white);
-					}
-					last = pos;	
-				}
+				
             }
 			jpg = gdImageJpegPtr(im,&filesize,-1);
 			/* copy frame from file to global buffer */
@@ -152,7 +137,6 @@ void *worker_thread(void *arg)
 			pthread_mutex_unlock(&pglobal->in[plugin_number].db);
 			gdImageDestroy(im);
 			
-	
 		}
 	}
     pthread_cleanup_pop(1);
