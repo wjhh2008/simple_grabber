@@ -121,7 +121,7 @@ void *worker_thread(void *arg)
               //      (nodes[pos].angle_q6_checkbit >> RPLIDAR_RESP_MEASUREMENT_ANGLE_SHIFT)/64.0f,
               //      nodes[pos].distance_q2/4.0f);
                     
-/*begin for pic begin*/
+
                 gdImageLine(im,
 						600,
 						600,
@@ -139,23 +139,17 @@ void *worker_thread(void *arg)
 					}
 					last = pos;	
 				}
-/*end for pic end*/
             }
 			jpg = gdImageJpegPtr(im,&filesize,-1);
-			//fprintf(stderr,"jpg size is %d",filesize);
 			/* copy frame from file to global buffer */
 			pthread_mutex_lock(&pglobal->in[plugin_number].db);
-			/* allocate memory for frame */
-			//void *space = malloc(filesize + (1 << 16));
+			/* free old frame*/
 			if(pglobal->in[plugin_number].buf != NULL) gdFree(pglobal->in[plugin_number].buf);
-			//void *srcjpg = jpg;
-			pglobal->in[plugin_number].buf = (unsigned char*)jpg;//memcpy(space,jpg,(size_t)filesize);
+			pglobal->in[plugin_number].buf = (unsigned char*)jpg;
 			pglobal->in[plugin_number].size = filesize;
 			/* signal fresh_frame */
 			pthread_cond_broadcast(&pglobal->in[plugin_number].db_update);
 			pthread_mutex_unlock(&pglobal->in[plugin_number].db);
-			//fprintf(stderr,"it's ok in before gdfree");
-			//gdFree(jpg);
 			gdImageDestroy(im);
 			
 	
